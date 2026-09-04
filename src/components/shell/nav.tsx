@@ -45,7 +45,12 @@ export function Nav({ onNavigate }: { onNavigate?: () => void }) {
 
 export function Brand() {
   return (
-    <Link href="/dashboard" className="flex items-center gap-2 px-3 text-base font-semibold">
+    // h-8 matches the 32px line box of a text-2xl page heading, so the brand
+    // and the page title share an optical centre.
+    <Link
+      href="/dashboard"
+      className="flex h-8 items-center gap-2 rounded-md px-3 text-base font-semibold focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none"
+    >
       <Boxes className="size-5 text-primary" aria-hidden />
       Stockpile
     </Link>

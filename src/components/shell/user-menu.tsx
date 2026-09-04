@@ -57,7 +57,7 @@ export function UserMenu({
           showName ? (
             <Button
               variant="ghost"
-              className="h-auto min-w-0 flex-1 justify-start gap-2 px-1.5 py-1.5"
+              className="h-auto min-w-0 flex-1 justify-start gap-2 px-3 py-1.5"
               aria-label="Account menu"
             >
               <Avatar className="size-7 shrink-0">

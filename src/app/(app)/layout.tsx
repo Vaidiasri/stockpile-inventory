@@ -21,8 +21,10 @@ export default async function AppLayout({ children }: LayoutProps<"/">) {
         sign out and the theme toggle were hundreds of pixels below the fold on
         any page taller than the viewport.
       */}
-      <aside className="hidden border-r bg-sidebar lg:sticky lg:top-0 lg:flex lg:h-svh lg:flex-col lg:gap-6 lg:py-4">
-        <Brand />
+      <aside className="hidden border-r bg-sidebar lg:sticky lg:top-0 lg:flex lg:h-svh lg:flex-col lg:gap-6 lg:pt-6 lg:pb-4">
+        <div className="px-2">
+          <Brand />
+        </div>
         {/* Scrolls on its own if the nav ever outgrows the column, so the
             footer below stays pinned regardless. */}
         <div className="min-h-0 flex-1 overflow-y-auto px-2">
