@@ -55,14 +55,23 @@ describe("error mapping", () => {
     expect((await body(response)).error.message).toBe("Stock quantity cannot go below zero.");
   });
 
-  it("turns a category still in use into a 409", async () => {
-    // ON DELETE RESTRICT raises 23001 (restrict_violation), not 23503 -
-    // confirmed against Neon.
-    const response = toErrorResponse(
+  it("distinguishes the two ends of the same foreign key", async () => {
+    // Deleting a category that still has products (ON DELETE RESTRICT -> 23001)
+    const blockedDelete = toErrorResponse(
       drizzleWrapped("23001", "products_category_id_categories_id_fk"),
     );
-    expect(response.status).toBe(409);
-    expect((await body(response)).error.message).toBe("That category no longer exists.");
+    expect(blockedDelete.status).toBe(409);
+    expect((await body(blockedDelete)).error.message).toBe(
+      "This category still has products. Move or delete them first.",
+    );
+
+    // Inserting a product against a category that is gone (23503) - same
+    // constraint name, opposite meaning.
+    const danglingReference = toErrorResponse(
+      drizzleWrapped("23503", "products_category_id_categories_id_fk"),
+    );
+    expect(danglingReference.status).toBe(409);
+    expect((await body(danglingReference)).error.message).toBe("That category no longer exists.");
   });
 
   it("does not mistake a five-character Node error code for a SQLSTATE", () => {

@@ -7,38 +7,48 @@ export type ApiError = {
   error: { message: string; code: string; fields?: Record<string, string> };
 };
 
-export type Paginated<T> = {
-  data: T[];
-  meta: { page: number; limit: number; total: number; totalPages: number };
-};
+export type PageMeta = { page: number; limit: number; total: number; totalPages: number };
 
-export const ok = <T>(data: T, status = 200) => NextResponse.json({ data }, { status });
+/** List endpoints pass `meta`; single-resource endpoints omit it. */
+export const ok = <T>(data: T, status = 200, meta?: PageMeta) =>
+  NextResponse.json(meta ? { data, meta } : { data }, { status });
+
 export const created = <T>(data: T) => NextResponse.json({ data }, { status: 201 });
-export const paginated = <T>(payload: Paginated<T>) => NextResponse.json(payload);
 
 /**
- * Unique/foreign-key/check constraints are the real validation for these
+ * Unique, foreign-key and check constraints are the real validation for these
  * rules, because a pre-flight SELECT would be both slower and racy. This maps
  * the constraint that actually fired onto a field-level message.
+ *
+ * Keyed by `sqlstate:constraint`, not by constraint alone: the same foreign
+ * key fires from both ends with opposite meanings. Inserting a product against
+ * a missing category raises 23503, while deleting a category that still has
+ * products raises 23001 -- and telling the user "that category no longer
+ * exists" when they tried to delete it would be nonsense.
  */
 const CONSTRAINT_MESSAGES: Record<string, { message: string; fields?: Record<string, string> }> = {
-  users_email_key: {
+  "23505:users_email_key": {
     message: "That email is already registered.",
     fields: { email: "That email is already registered." },
   },
-  products_sku_key: {
+  "23505:products_sku_key": {
     message: "That SKU is already in use.",
     fields: { sku: "That SKU is already in use." },
   },
-  categories_name_key: {
+  "23505:categories_name_key": {
     message: "A category with that name already exists.",
     fields: { name: "A category with that name already exists." },
   },
-  products_quantity_non_negative: { message: "Stock quantity cannot go below zero." },
-  products_unit_price_non_negative: { message: "Unit price cannot be negative." },
-  products_category_id_categories_id_fk: {
+  "23514:products_quantity_non_negative": {
+    message: "Stock quantity cannot go below zero.",
+  },
+  "23514:products_unit_price_non_negative": { message: "Unit price cannot be negative." },
+  "23503:products_category_id_categories_id_fk": {
     message: "That category no longer exists.",
     fields: { categoryId: "That category no longer exists." },
+  },
+  "23001:products_category_id_categories_id_fk": {
+    message: "This category still has products. Move or delete them first.",
   },
 };
 
@@ -105,8 +115,10 @@ export function toErrorResponse(error: unknown): NextResponse<ApiError> {
 
   const pgError = findConstraintError(error);
   if (pgError) {
-    const known = pgError.constraint ? CONSTRAINT_MESSAGES[pgError.constraint] : undefined;
     const status = HANDLED_SQLSTATES[pgError.code];
+    const known = pgError.constraint
+      ? CONSTRAINT_MESSAGES[`${pgError.code}:${pgError.constraint}`]
+      : undefined;
     return NextResponse.json(
       {
         error: {
