@@ -51,6 +51,15 @@ const thresholdField = z.coerce
   .min(0, "Threshold cannot be negative.")
   .max(1_000_000_000, "Threshold is too large.");
 
+/**
+ * A cleared form input posts "" -- for a nullable column that means "unset",
+ * not "invalid". Handled in the schema rather than by the caller, because the
+ * same schema validates the form on the client and the request on the server:
+ * mapping "" to null only in the submit handler left the client rejecting its
+ * own empty optional fields.
+ */
+const blankToNull = (value: unknown) => (value === "" ? null : value);
+
 /** Empty text inputs post as "", which for a nullable column means "unset". */
 const optionalText = (max: number) =>
   z
@@ -63,12 +72,12 @@ const optionalText = (max: number) =>
 const editableFields = {
   name: nameField,
   sku: skuField,
-  categoryId: z.uuid("Choose a valid category.").nullish(),
+  categoryId: z.preprocess(blankToNull, z.uuid("Choose a valid category.").nullish()),
   description: optionalText(2000),
   unitPrice: priceField,
   supplierName: optionalText(200),
   lowStockThreshold: thresholdField,
-  imageUrl: z.url("Enter a valid image URL.").nullish(),
+  imageUrl: z.preprocess(blankToNull, z.url("Enter a valid image URL.").nullish()),
 };
 
 export const productCreateSchema = z.object({
