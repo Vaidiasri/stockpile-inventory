@@ -27,7 +27,14 @@ const initials = (name: string) =>
     .map((part) => part[0]?.toUpperCase())
     .join("") || "?";
 
-export function UserMenu({ user }: { user: SessionUser }) {
+export function UserMenu({
+  user,
+  /** The sidebar footer has room for the name; the mobile bar does not. */
+  showName = false,
+}: {
+  user: SessionUser;
+  showName?: boolean;
+}) {
   const router = useRouter();
   const [signingOut, setSigningOut] = useState(false);
 
@@ -47,11 +54,34 @@ export function UserMenu({ user }: { user: SessionUser }) {
     <DropdownMenu>
       <DropdownMenuTrigger
         render={
-          <Button variant="ghost" size="icon" aria-label="Account menu">
-            <Avatar className="size-7">
-              <AvatarFallback className="text-xs">{initials(user.name)}</AvatarFallback>
-            </Avatar>
-          </Button>
+          showName ? (
+            <Button
+              variant="ghost"
+              className="h-auto min-w-0 flex-1 justify-start gap-2 px-1.5 py-1.5"
+              aria-label="Account menu"
+            >
+              <Avatar className="size-7 shrink-0">
+                <AvatarFallback className="text-xs">{initials(user.name)}</AvatarFallback>
+              </Avatar>
+              <span className="grid min-w-0 text-left">
+                <span className="truncate text-sm font-medium">{user.name}</span>
+                <span className="truncate text-xs font-normal text-muted-foreground capitalize">
+                  {user.role}
+                </span>
+              </span>
+            </Button>
+          ) : (
+            <Button
+              variant="ghost"
+              size="icon"
+              className="touch-target"
+              aria-label="Account menu"
+            >
+              <Avatar className="size-7">
+                <AvatarFallback className="text-xs">{initials(user.name)}</AvatarFallback>
+              </Avatar>
+            </Button>
+          )
         }
       />
       <DropdownMenuContent align="end" className="w-56">
