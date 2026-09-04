@@ -1,6 +1,6 @@
 "use client";
 
-import { Boxes, LayoutDashboard, Package, ScrollText, Tags } from "lucide-react";
+import { Boxes, BookOpen, LayoutDashboard, Package, ScrollText, Tags } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 
@@ -11,6 +11,7 @@ const LINKS = [
   { href: "/products", label: "Products", icon: Package },
   { href: "/categories", label: "Categories", icon: Tags },
   { href: "/inventory", label: "Stock history", icon: ScrollText },
+  { href: "/api-docs", label: "API reference", icon: BookOpen },
 ] as const;
 
 export function Nav({ onNavigate }: { onNavigate?: () => void }) {

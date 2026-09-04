@@ -1,0 +1,867 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Stockpile Inventory API",
+    "version": "1.0.0",
+    "description": "REST API for the Stockpile inventory management system.\n\n## Authentication\n\nSign in via `POST /api/auth/login`. The response sets an `inv_session` httpOnly cookie holding a signed JWT (HS256, 7 day expiry); send it on every subsequent request. Browsers do this automatically. With curl, use a cookie jar:\n\n```bash\ncurl -c jar.txt -X POST http://localhost:3000/api/auth/login \\\n  -H 'Content-Type: application/json' \\\n  -d '{\"email\":\"admin@stockpile.dev\",\"password\":\"Password123!\"}'\n\ncurl -b jar.txt http://localhost:3000/api/products\n```\n\n## Response envelope\n\nSuccess is `{ \"data\": ... }`; list endpoints add `{ \"meta\": ... }` with pagination. Errors are `{ \"error\": { \"message\", \"code\", \"fields\"? } }`, where `fields` maps a form field name to a message so a client can show it inline.\n\n## Roles\n\nEvery endpoint needs a signed-in user. `DELETE` on products and categories additionally requires the `admin` role and returns `403` for `staff`.\n\n## Stock\n\n`products.quantity` is read-only on `POST`/`PATCH` after creation: change it through `POST /api/products/{id}/stock`, which writes the movement and its audit row in one transaction. Stock is prevented from going negative by a database CHECK constraint, surfaced as `422`."
+  },
+  "servers": [{ "url": "http://localhost:3000", "description": "Local development" }],
+  "tags": [
+    { "name": "Authentication" },
+    { "name": "Products" },
+    { "name": "Stock" },
+    { "name": "Categories" },
+    { "name": "Inventory" },
+    { "name": "Dashboard" },
+    { "name": "Uploads" }
+  ],
+  "components": {
+    "securitySchemes": {
+      "sessionCookie": {
+        "type": "apiKey",
+        "in": "cookie",
+        "name": "inv_session",
+        "description": "Signed JWT set by POST /api/auth/login."
+      }
+    },
+    "schemas": {
+      "User": {
+        "type": "object",
+        "required": ["id", "email", "name", "role"],
+        "properties": {
+          "id": { "type": "string", "format": "uuid" },
+          "email": { "type": "string", "format": "email" },
+          "name": { "type": "string" },
+          "role": { "type": "string", "enum": ["admin", "staff"] }
+        }
+      },
+      "StockStatus": {
+        "type": "string",
+        "enum": ["in_stock", "low_stock", "out_of_stock"],
+        "description": "Derived by Postgres from quantity and lowStockThreshold. Read-only; it cannot be set through the API."
+      },
+      "Product": {
+        "type": "object",
+        "required": ["id", "name", "sku", "quantity", "unitPrice", "status"],
+        "properties": {
+          "id": { "type": "string", "format": "uuid" },
+          "name": { "type": "string" },
+          "sku": { "type": "string", "description": "Unique. Stored upper-cased." },
+          "categoryId": { "type": ["string", "null"], "format": "uuid" },
+          "categoryName": { "type": ["string", "null"] },
+          "description": { "type": ["string", "null"] },
+          "quantity": { "type": "integer", "minimum": 0 },
+          "unitPrice": {
+            "type": "string",
+            "example": "4499.00",
+            "description": "numeric(12,2) exchanged as a string so no float rounding error accumulates."
+          },
+          "supplierName": { "type": ["string", "null"] },
+          "lowStockThreshold": { "type": "integer", "minimum": 0 },
+          "imageUrl": { "type": ["string", "null"], "format": "uri" },
+          "status": { "$ref": "#/components/schemas/StockStatus" },
+          "createdAt": { "type": "string", "format": "date-time" },
+          "updatedAt": { "type": "string", "format": "date-time" }
+        }
+      },
+      "ProductInput": {
+        "type": "object",
+        "required": ["name", "sku"],
+        "properties": {
+          "name": { "type": "string", "minLength": 2, "maxLength": 200 },
+          "sku": {
+            "type": "string",
+            "minLength": 2,
+            "maxLength": 64,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$"
+          },
+          "categoryId": { "type": ["string", "null"], "format": "uuid" },
+          "description": { "type": ["string", "null"], "maxLength": 2000 },
+          "quantity": {
+            "type": "integer",
+            "minimum": 0,
+            "default": 0,
+            "description": "Opening stock. Accepted on create only; ignored on PATCH."
+          },
+          "unitPrice": { "type": ["string", "number"], "default": "0.00", "minimum": 0 },
+          "supplierName": { "type": ["string", "null"], "maxLength": 200 },
+          "lowStockThreshold": { "type": "integer", "minimum": 0, "default": 10 },
+          "imageUrl": { "type": ["string", "null"], "format": "uri" }
+        }
+      },
+      "Category": {
+        "type": "object",
+        "required": ["id", "name", "productCount"],
+        "properties": {
+          "id": { "type": "string", "format": "uuid" },
+          "name": { "type": "string" },
+          "description": { "type": ["string", "null"] },
+          "productCount": { "type": "integer" },
+          "createdAt": { "type": "string", "format": "date-time" },
+          "updatedAt": { "type": "string", "format": "date-time" }
+        }
+      },
+      "CategoryInput": {
+        "type": "object",
+        "required": ["name"],
+        "properties": {
+          "name": { "type": "string", "minLength": 2, "maxLength": 100 },
+          "description": { "type": ["string", "null"], "maxLength": 500 }
+        }
+      },
+      "StockAdjustment": {
+        "type": "object",
+        "description": "Send exactly one of delta or quantity.",
+        "properties": {
+          "delta": {
+            "type": "integer",
+            "description": "Relative change. Positive receives stock (type \"in\"), negative issues it (type \"out\"). Must not be 0.",
+            "example": 5
+          },
+          "quantity": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Absolute new count for a stocktake correction (type \"adjust\")."
+          },
+          "reason": { "type": ["string", "null"], "maxLength": 200 }
+        }
+      },
+      "InventoryTransaction": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string", "format": "uuid" },
+          "productId": {
+            "type": ["string", "null"],
+            "format": "uuid",
+            "description": "Null once the product is deleted; the snapshot fields keep the row readable."
+          },
+          "productSku": { "type": "string" },
+          "productName": { "type": "string" },
+          "type": { "type": "string", "enum": ["in", "out", "adjust"] },
+          "quantityDelta": { "type": "integer" },
+          "quantityAfter": { "type": "integer" },
+          "reason": { "type": ["string", "null"] },
+          "userName": { "type": ["string", "null"] },
+          "createdAt": { "type": "string", "format": "date-time" }
+        }
+      },
+      "DashboardStats": {
+        "type": "object",
+        "properties": {
+          "totalProducts": { "type": "integer" },
+          "totalCategories": { "type": "integer" },
+          "totalStock": { "type": "integer" },
+          "lowStockItems": { "type": "integer" },
+          "outOfStockItems": { "type": "integer" },
+          "inventoryValue": { "type": "string" }
+        }
+      },
+      "PageMeta": {
+        "type": "object",
+        "properties": {
+          "page": { "type": "integer" },
+          "limit": { "type": "integer" },
+          "total": { "type": "integer" },
+          "totalPages": { "type": "integer" }
+        }
+      },
+      "Error": {
+        "type": "object",
+        "properties": {
+          "error": {
+            "type": "object",
+            "required": ["message", "code"],
+            "properties": {
+              "message": { "type": "string" },
+              "code": {
+                "type": "string",
+                "enum": [
+                  "BAD_REQUEST",
+                  "UNAUTHORIZED",
+                  "FORBIDDEN",
+                  "NOT_FOUND",
+                  "CONFLICT",
+                  "VALIDATION_ERROR",
+                  "CHECK_VIOLATION",
+                  "NOT_CONFIGURED",
+                  "INTERNAL_ERROR"
+                ]
+              },
+              "fields": {
+                "type": "object",
+                "additionalProperties": { "type": "string" },
+                "description": "Field name to message, for inline form errors."
+              }
+            }
+          }
+        }
+      }
+    },
+    "responses": {
+      "Unauthorized": {
+        "description": "No valid session cookie.",
+        "content": {
+          "application/json": {
+            "schema": { "$ref": "#/components/schemas/Error" },
+            "example": {
+              "error": { "message": "You must be signed in to do that.", "code": "UNAUTHORIZED" }
+            }
+          }
+        }
+      },
+      "Forbidden": {
+        "description": "Signed in, but the role is not permitted.",
+        "content": {
+          "application/json": {
+            "schema": { "$ref": "#/components/schemas/Error" },
+            "example": {
+              "error": {
+                "message": "This action is restricted to administrators.",
+                "code": "FORBIDDEN"
+              }
+            }
+          }
+        }
+      },
+      "NotFound": {
+        "description": "No such record.",
+        "content": {
+          "application/json": { "schema": { "$ref": "#/components/schemas/Error" } }
+        }
+      },
+      "ValidationError": {
+        "description": "Request body failed validation.",
+        "content": {
+          "application/json": {
+            "schema": { "$ref": "#/components/schemas/Error" },
+            "example": {
+              "error": {
+                "message": "Some fields need attention.",
+                "code": "VALIDATION_ERROR",
+                "fields": { "sku": "SKU must be at least 2 characters." }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "security": [{ "sessionCookie": [] }],
+  "paths": {
+    "/api/auth/register": {
+      "post": {
+        "tags": ["Authentication"],
+        "summary": "Register and sign in",
+        "security": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["name", "email", "password"],
+                "properties": {
+                  "name": { "type": "string", "minLength": 2 },
+                  "email": { "type": "string", "format": "email" },
+                  "password": { "type": "string", "minLength": 8 }
+                }
+              },
+              "example": {
+                "name": "Ada Lovelace",
+                "email": "ada@example.com",
+                "password": "supersecret"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Created. Sets the session cookie.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": { "data": { "$ref": "#/components/schemas/User" } }
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Email already registered.",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/Error" },
+                "example": {
+                  "error": {
+                    "message": "That email is already registered.",
+                    "code": "CONFLICT",
+                    "fields": { "email": "That email is already registered." }
+                  }
+                }
+              }
+            }
+          },
+          "422": { "$ref": "#/components/responses/ValidationError" }
+        }
+      }
+    },
+    "/api/auth/login": {
+      "post": {
+        "tags": ["Authentication"],
+        "summary": "Sign in",
+        "security": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["email", "password"],
+                "properties": {
+                  "email": { "type": "string", "format": "email" },
+                  "password": { "type": "string" }
+                }
+              },
+              "example": { "email": "admin@stockpile.dev", "password": "Password123!" }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Signed in. Sets the session cookie.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": { "data": { "$ref": "#/components/schemas/User" } }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Wrong credentials. The message is identical for an unknown email and a wrong password, so it cannot be used to enumerate accounts.",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/Error" },
+                "example": {
+                  "error": { "message": "Incorrect email or password.", "code": "UNAUTHORIZED" }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/auth/logout": {
+      "post": {
+        "tags": ["Authentication"],
+        "summary": "Sign out",
+        "security": [],
+        "responses": { "200": { "description": "Session cookie cleared." } }
+      }
+    },
+    "/api/auth/me": {
+      "get": {
+        "tags": ["Authentication"],
+        "summary": "Current user",
+        "responses": {
+          "200": {
+            "description": "The signed-in user.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": { "data": { "$ref": "#/components/schemas/User" } }
+                }
+              }
+            }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" }
+        }
+      }
+    },
+    "/api/products": {
+      "get": {
+        "tags": ["Products"],
+        "summary": "List products",
+        "description": "Search, filter, sort and paginate. All parameters are optional.",
+        "parameters": [
+          {
+            "name": "q",
+            "in": "query",
+            "description": "Case-insensitive substring match on name OR SKU.",
+            "schema": { "type": "string", "maxLength": 100 }
+          },
+          {
+            "name": "category",
+            "in": "query",
+            "schema": { "type": "string", "format": "uuid" }
+          },
+          { "name": "status", "in": "query", "schema": { "$ref": "#/components/schemas/StockStatus" } },
+          {
+            "name": "sort",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": ["name", "sku", "quantity", "unitPrice", "createdAt"],
+              "default": "createdAt"
+            }
+          },
+          {
+            "name": "order",
+            "in": "query",
+            "schema": { "type": "string", "enum": ["asc", "desc"], "default": "desc" }
+          },
+          { "name": "page", "in": "query", "schema": { "type": "integer", "minimum": 1, "default": 1 } },
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": { "type": "integer", "minimum": 1, "maximum": 100, "default": 10 }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "A page of products.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": { "type": "array", "items": { "$ref": "#/components/schemas/Product" } },
+                    "meta": { "$ref": "#/components/schemas/PageMeta" }
+                  }
+                }
+              }
+            }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "422": { "$ref": "#/components/responses/ValidationError" }
+        }
+      },
+      "post": {
+        "tags": ["Products"],
+        "summary": "Create a product",
+        "description": "Opening stock, if greater than zero, is written as the product's first inventory transaction in the same database transaction.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/ProductInput" },
+              "example": {
+                "name": "Ergonomic Footrest",
+                "sku": "FURN-FOOT-004",
+                "quantity": 25,
+                "unitPrice": "1899.50",
+                "supplierName": "Ironwood Works",
+                "lowStockThreshold": 10
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Created.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": { "data": { "$ref": "#/components/schemas/Product" } }
+                }
+              }
+            }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "409": {
+            "description": "SKU already in use.",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/Error" },
+                "example": {
+                  "error": {
+                    "message": "That SKU is already in use.",
+                    "code": "CONFLICT",
+                    "fields": { "sku": "That SKU is already in use." }
+                  }
+                }
+              }
+            }
+          },
+          "422": { "$ref": "#/components/responses/ValidationError" }
+        }
+      }
+    },
+    "/api/products/{id}": {
+      "parameters": [
+        { "name": "id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } }
+      ],
+      "get": {
+        "tags": ["Products"],
+        "summary": "Get a product",
+        "responses": {
+          "200": {
+            "description": "The product.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": { "data": { "$ref": "#/components/schemas/Product" } }
+                }
+              }
+            }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "404": { "$ref": "#/components/responses/NotFound" }
+        }
+      },
+      "patch": {
+        "tags": ["Products"],
+        "summary": "Update a product",
+        "description": "Partial update; send only the fields being changed. `quantity` is not accepted here - use the stock endpoint so the change is audited.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/ProductInput" },
+              "example": { "unitPrice": "2099.00", "lowStockThreshold": 15 }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Updated.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": { "data": { "$ref": "#/components/schemas/Product" } }
+                }
+              }
+            }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "409": { "description": "SKU already in use." },
+          "422": { "$ref": "#/components/responses/ValidationError" }
+        }
+      },
+      "delete": {
+        "tags": ["Products"],
+        "summary": "Delete a product (admin only)",
+        "description": "Inventory transactions for the product are kept: their product reference becomes null while the snapshotted SKU and name preserve the audit trail.",
+        "responses": {
+          "200": {
+            "description": "Deleted.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "type": "object",
+                      "properties": { "id": { "type": "string", "format": "uuid" } }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" }
+        }
+      }
+    },
+    "/api/products/{id}/stock": {
+      "parameters": [
+        { "name": "id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } }
+      ],
+      "post": {
+        "tags": ["Stock"],
+        "summary": "Adjust stock",
+        "description": "Applies the change and writes an inventory transaction in one database transaction. A relative delta is applied as `quantity = quantity + delta` in SQL, so two concurrent movements cannot race.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/StockAdjustment" },
+              "examples": {
+                "receive": {
+                  "summary": "Receive 5 units",
+                  "value": { "delta": 5, "reason": "Received shipment" }
+                },
+                "issue": {
+                  "summary": "Issue 20 units",
+                  "value": { "delta": -20, "reason": "Shipped to Surat branch" }
+                },
+                "stocktake": {
+                  "summary": "Correct to an exact count",
+                  "value": { "quantity": 3, "reason": "Stocktake" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Updated product, with the recalculated status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": { "data": { "$ref": "#/components/schemas/Product" } }
+                }
+              }
+            }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "422": {
+            "description": "The change would take stock below zero, or the body is invalid.",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/Error" },
+                "example": {
+                  "error": {
+                    "message": "Stock quantity cannot go below zero.",
+                    "code": "CHECK_VIOLATION"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/categories": {
+      "get": {
+        "tags": ["Categories"],
+        "summary": "List categories with product counts",
+        "responses": {
+          "200": {
+            "description": "All categories, alphabetically.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": { "type": "array", "items": { "$ref": "#/components/schemas/Category" } }
+                  }
+                }
+              }
+            }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" }
+        }
+      },
+      "post": {
+        "tags": ["Categories"],
+        "summary": "Create a category",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/CategoryInput" },
+              "example": { "name": "Consumables", "description": "Fast-moving replaceables" }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Created.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": { "data": { "$ref": "#/components/schemas/Category" } }
+                }
+              }
+            }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "409": { "description": "A category with that name already exists." },
+          "422": { "$ref": "#/components/responses/ValidationError" }
+        }
+      }
+    },
+    "/api/categories/{id}": {
+      "parameters": [
+        { "name": "id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } }
+      ],
+      "get": {
+        "tags": ["Categories"],
+        "summary": "Get a category",
+        "responses": {
+          "200": {
+            "description": "The category.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": { "data": { "$ref": "#/components/schemas/Category" } }
+                }
+              }
+            }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "404": { "$ref": "#/components/responses/NotFound" }
+        }
+      },
+      "patch": {
+        "tags": ["Categories"],
+        "summary": "Update a category",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": { "schema": { "$ref": "#/components/schemas/CategoryInput" } }
+          }
+        },
+        "responses": {
+          "200": { "description": "Updated." },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "409": { "description": "A category with that name already exists." },
+          "422": { "$ref": "#/components/responses/ValidationError" }
+        }
+      },
+      "delete": {
+        "tags": ["Categories"],
+        "summary": "Delete a category (admin only)",
+        "description": "Refused while any product references the category, so stock is never orphaned.",
+        "responses": {
+          "200": { "description": "Deleted." },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "409": {
+            "description": "The category still has products.",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/Error" },
+                "example": {
+                  "error": {
+                    "message": "This category still has products. Move or delete them first.",
+                    "code": "CONFLICT"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/inventory/transactions": {
+      "get": {
+        "tags": ["Inventory"],
+        "summary": "Stock movement history",
+        "description": "Newest first. Includes movements for products that have since been deleted.",
+        "parameters": [
+          {
+            "name": "productId",
+            "in": "query",
+            "schema": { "type": "string", "format": "uuid" }
+          },
+          {
+            "name": "type",
+            "in": "query",
+            "schema": { "type": "string", "enum": ["in", "out", "adjust"] }
+          },
+          { "name": "page", "in": "query", "schema": { "type": "integer", "minimum": 1, "default": 1 } },
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": { "type": "integer", "minimum": 1, "maximum": 100, "default": 20 }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "A page of movements.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "type": "array",
+                      "items": { "$ref": "#/components/schemas/InventoryTransaction" }
+                    },
+                    "meta": { "$ref": "#/components/schemas/PageMeta" }
+                  }
+                }
+              }
+            }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" }
+        }
+      }
+    },
+    "/api/dashboard": {
+      "get": {
+        "tags": ["Dashboard"],
+        "summary": "Inventory overview counts",
+        "responses": {
+          "200": {
+            "description": "Aggregate statistics.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": { "data": { "$ref": "#/components/schemas/DashboardStats" } }
+                },
+                "example": {
+                  "data": {
+                    "totalProducts": 13,
+                    "totalCategories": 4,
+                    "totalStock": 983,
+                    "lowStockItems": 6,
+                    "outOfStockItems": 2,
+                    "inventoryValue": "1174687.50"
+                  }
+                }
+              }
+            }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" }
+        }
+      }
+    },
+    "/api/uploads": {
+      "post": {
+        "tags": ["Uploads"],
+        "summary": "Upload a product image",
+        "description": "Optional feature. Returns 501 unless BLOB_READ_WRITE_TOKEN is configured; the product form then falls back to accepting an image URL.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "type": "object",
+                "properties": { "file": { "type": "string", "format": "binary" } }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Stored. Returns the public URL.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "type": "object",
+                      "properties": { "url": { "type": "string", "format": "uri" } }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": { "description": "Missing file, unsupported type, or larger than 4MB." },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "501": { "description": "No blob store configured." }
+        }
+      }
+    }
+  }
+}

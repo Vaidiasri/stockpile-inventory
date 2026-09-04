@@ -1,0 +1,937 @@
+{
+  "info": {
+    "name": "Stockpile Inventory API",
+    "description": "REST API for the Stockpile inventory management system.\n\n## Getting started\n\n1. Set the `baseUrl` variable if you are not running on http://localhost:3000.\n2. Run **Authentication > Sign in (admin)**. The response sets an `inv_session` httpOnly cookie, which Postman stores in its cookie jar and sends on every later request automatically. There is no bearer token to copy.\n3. Run the folders in order, or use Postman's Collection Runner / `npx newman run` on the whole thing: the folders are numbered because they share state. `List products` captures a product id into `productId`, `Create product` replaces it with the one it creates, and folder 6 cleans up and signs out last.\n\n## Roles\n\nSign in as `admin@stockpile.dev` for full access, or `staff@stockpile.dev` to see the 403 that DELETE returns for a non-admin. Both use the password `Password123!`.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:3000",
+      "type": "string"
+    },
+    {
+      "key": "productId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "categoryId",
+      "value": "",
+      "type": "string"
+    }
+  ],
+  "item": [
+    {
+      "name": "1. Authentication",
+      "item": [
+        {
+          "name": "Register",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/auth/register",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "auth",
+                "register"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Ada Lovelace\",\n  \"email\": \"ada@example.com\",\n  \"password\": \"supersecret\"\n}"
+            },
+            "description": "201 on success and signs the new user in. Returns 409 with a field-level message if the email is taken."
+          }
+        },
+        {
+          "name": "Sign in (admin)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('signed in', () => pm.response.to.have.status(200));",
+                  "pm.test('is an admin', () => {",
+                  "  pm.expect(pm.response.json().data.role).to.eql('admin');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/auth/login",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "auth",
+                "login"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"admin@stockpile.dev\",\n  \"password\": \"Password123!\"\n}"
+            },
+            "description": "Sets the inv_session cookie. Run this first."
+          }
+        },
+        {
+          "name": "Sign in (wrong password)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('rejected', () => pm.response.to.have.status(401));",
+                  "pm.test('does not reveal whether the email exists', () => {",
+                  "  pm.expect(pm.response.json().error.message).to.eql('Incorrect email or password.');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/auth/login",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "auth",
+                "login"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"admin@stockpile.dev\",\n  \"password\": \"wrong\"\n}"
+            },
+            "description": "The message is byte-identical to an unknown-email response, so it cannot be used to enumerate accounts."
+          }
+        },
+        {
+          "name": "Current user",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/api/auth/me",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "auth",
+                "me"
+              ]
+            },
+            "description": "401 when there is no valid session cookie."
+          }
+        }
+      ],
+      "description": "Run 'Sign in (admin)' first: it sets the cookie every later request depends on."
+    },
+    {
+      "name": "2. Products",
+      "item": [
+        {
+          "name": "List products",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('returns a page', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "if (body.data && body.data.length) {",
+                  "  pm.collectionVariables.set('productId', body.data[0].id);",
+                  "  if (body.data[0].categoryId) {",
+                  "    pm.collectionVariables.set('categoryId', body.data[0].categoryId);",
+                  "  }",
+                  "}",
+                  "pm.test('includes pagination meta', () => {",
+                  "  pm.expect(body.meta).to.have.property('totalPages');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/api/products?page=1&limit=10&sort=createdAt&order=desc",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "products"
+              ],
+              "query": [
+                {
+                  "key": "page",
+                  "value": "1"
+                },
+                {
+                  "key": "limit",
+                  "value": "10"
+                },
+                {
+                  "key": "sort",
+                  "value": "createdAt",
+                  "description": "name | sku | quantity | unitPrice | createdAt"
+                },
+                {
+                  "key": "order",
+                  "value": "desc",
+                  "description": "asc | desc"
+                },
+                {
+                  "key": "q",
+                  "value": "",
+                  "description": "Substring match on name OR SKU",
+                  "disabled": true
+                },
+                {
+                  "key": "category",
+                  "value": "{{categoryId}}",
+                  "disabled": true
+                },
+                {
+                  "key": "status",
+                  "value": "low_stock",
+                  "description": "in_stock | low_stock | out_of_stock",
+                  "disabled": true
+                }
+              ]
+            },
+            "description": "Captures the first product id into {{productId}} for the requests below."
+          }
+        },
+        {
+          "name": "Search by name or SKU",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/api/products?q=ELEC",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "products"
+              ],
+              "query": [
+                {
+                  "key": "q",
+                  "value": "ELEC"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Filter low stock, cheapest first",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/api/products?status=low_stock&sort=unitPrice&order=asc",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "products"
+              ],
+              "query": [
+                {
+                  "key": "status",
+                  "value": "low_stock"
+                },
+                {
+                  "key": "sort",
+                  "value": "unitPrice"
+                },
+                {
+                  "key": "order",
+                  "value": "asc"
+                }
+              ]
+            },
+            "description": "status is a generated column in Postgres, so this filter is an index scan."
+          }
+        },
+        {
+          "name": "Create product",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('created', () => pm.response.to.have.status(201));",
+                  "const product = pm.response.json().data;",
+                  "pm.collectionVariables.set('productId', product.id);",
+                  "pm.test('SKU is upper-cased', () => {",
+                  "  pm.expect(product.sku).to.eql('DEMO-WIDGET-01');",
+                  "});",
+                  "pm.test('status is derived from quantity', () => {",
+                  "  pm.expect(product.status).to.eql('in_stock');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/products",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "products"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Demo Widget\",\n  \"sku\": \"demo-widget-01\",\n  \"description\": \"Created from the Postman collection\",\n  \"quantity\": 40,\n  \"unitPrice\": \"249.99\",\n  \"supplierName\": \"Acme Supplies\",\n  \"lowStockThreshold\": 10\n}"
+            },
+            "description": "The SKU is sent lower-case on purpose: the API normalises it. Opening stock is written as the product's first inventory transaction in the same database transaction."
+          }
+        },
+        {
+          "name": "Create product (duplicate SKU -> 409)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('conflict', () => pm.response.to.have.status(409));",
+                  "pm.test('names the offending field', () => {",
+                  "  pm.expect(pm.response.json().error.fields).to.have.property('sku');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/products",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "products"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Duplicate\",\n  \"sku\": \"DEMO-WIDGET-01\",\n  \"quantity\": 1,\n  \"unitPrice\": \"1.00\"\n}"
+            },
+            "description": "The unique index on products.sku is the check; the Postgres error is mapped to a 409 naming the field."
+          }
+        },
+        {
+          "name": "Create product (invalid -> 422)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('unprocessable', () => pm.response.to.have.status(422));",
+                  "pm.test('reports every bad field at once', () => {",
+                  "  const fields = pm.response.json().error.fields;",
+                  "  pm.expect(Object.keys(fields).length).to.be.above(1);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/products",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "products"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"X\",\n  \"sku\": \"!\",\n  \"quantity\": -5,\n  \"unitPrice\": \"-1\"\n}"
+            }
+          }
+        },
+        {
+          "name": "Get product",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/api/products/{{productId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "products",
+                "{{productId}}"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Update product",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/products/{{productId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "products",
+                "{{productId}}"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"unitPrice\": \"299.00\",\n  \"lowStockThreshold\": 15\n}"
+            },
+            "description": "Partial update. `quantity` is not accepted here: stock moves only through the stock endpoint, so every change leaves an audit row."
+          }
+        }
+      ]
+    },
+    {
+      "name": "3. Stock",
+      "item": [
+        {
+          "name": "Receive stock (+5)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('ok', () => pm.response.to.have.status(200));",
+                  "pm.test('returns the recalculated status', () => {",
+                  "  pm.expect(pm.response.json().data).to.have.property('status');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/products/{{productId}}/stock",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "products",
+                "{{productId}}",
+                "stock"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"delta\": 5,\n  \"reason\": \"Received shipment\"\n}"
+            },
+            "description": "Applied as `quantity = quantity + delta` in SQL, so two concurrent movements cannot race."
+          }
+        },
+        {
+          "name": "Issue stock (-3)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/products/{{productId}}/stock",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "products",
+                "{{productId}}",
+                "stock"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"delta\": -3,\n  \"reason\": \"Shipped to branch\"\n}"
+            }
+          }
+        },
+        {
+          "name": "Correct to an exact count",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/products/{{productId}}/stock",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "products",
+                "{{productId}}",
+                "stock"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"quantity\": 8,\n  \"reason\": \"Stocktake\"\n}"
+            },
+            "description": "Absolute set, recorded as an \"adjust\" movement with the computed delta."
+          }
+        },
+        {
+          "name": "Oversell (-99999 -> 422)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('refused', () => pm.response.to.have.status(422));",
+                  "pm.test('explains why', () => {",
+                  "  pm.expect(pm.response.json().error.message).to.include('below zero');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/products/{{productId}}/stock",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "products",
+                "{{productId}}",
+                "stock"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"delta\": -99999\n}"
+            },
+            "description": "Refused by the CHECK (quantity >= 0) constraint in Postgres, not by an application-level guard that could be raced."
+          }
+        }
+      ]
+    },
+    {
+      "name": "4. Categories",
+      "item": [
+        {
+          "name": "List categories",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/api/categories",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "categories"
+              ]
+            },
+            "description": "Each row includes productCount."
+          }
+        },
+        {
+          "name": "Create category",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('created', () => pm.response.to.have.status(201));",
+                  "pm.collectionVariables.set('categoryId', pm.response.json().data.id);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/categories",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "categories"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Consumables\",\n  \"description\": \"Fast-moving replaceables\"\n}"
+            }
+          }
+        },
+        {
+          "name": "Update category",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/categories/{{categoryId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "categories",
+                "{{categoryId}}"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Consumables and Spares\"\n}"
+            }
+          }
+        },
+        {
+          "name": "Delete category (admin only)",
+          "request": {
+            "method": "DELETE",
+            "url": {
+              "raw": "{{baseUrl}}/api/categories/{{categoryId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "categories",
+                "{{categoryId}}"
+              ]
+            },
+            "description": "409 while any product still references it: ON DELETE RESTRICT means stock is never orphaned. Run List products first with a category filter to see which."
+          }
+        }
+      ]
+    },
+    {
+      "name": "5. Inventory and dashboard",
+      "item": [
+        {
+          "name": "Stock movement history",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/api/inventory/transactions?page=1&limit=20",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "inventory",
+                "transactions"
+              ],
+              "query": [
+                {
+                  "key": "page",
+                  "value": "1"
+                },
+                {
+                  "key": "limit",
+                  "value": "20"
+                },
+                {
+                  "key": "productId",
+                  "value": "{{productId}}",
+                  "disabled": true
+                },
+                {
+                  "key": "type",
+                  "value": "out",
+                  "description": "in | out | adjust",
+                  "disabled": true
+                }
+              ]
+            },
+            "description": "Newest first. Includes movements for deleted products."
+          }
+        },
+        {
+          "name": "Dashboard statistics",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('ok', () => pm.response.to.have.status(200));",
+                  "pm.test('has all five overview counts', () => {",
+                  "  const data = pm.response.json().data;",
+                  "  ['totalProducts', 'totalCategories', 'totalStock', 'lowStockItems', 'outOfStockItems']",
+                  "    .forEach((key) => pm.expect(data).to.have.property(key));",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/api/dashboard",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "dashboard"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "6. Roles and cleanup",
+      "description": "Ordered last on purpose: signing out clears the cookie, and the delete removes the product the earlier folders act on.",
+      "item": [
+        {
+          "name": "Sign in (staff)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/auth/login",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "auth",
+                "login"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"staff@stockpile.dev\",\n  \"password\": \"Password123!\"\n}"
+            },
+            "description": "Use this to confirm that DELETE returns 403 for a non-admin."
+          }
+        },
+        {
+          "name": "Delete product as staff (403)",
+          "request": {
+            "method": "DELETE",
+            "url": {
+              "raw": "{{baseUrl}}/api/products/{{productId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "products",
+                "{{productId}}"
+              ]
+            },
+            "description": "Expected to fail: staff cannot delete inventory."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('forbidden for staff', () => pm.response.to.have.status(403));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Sign back in as admin",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('signed in', () => pm.response.to.have.status(200));",
+                  "pm.test('is an admin', () => {",
+                  "  pm.expect(pm.response.json().data.role).to.eql('admin');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/auth/login",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "auth",
+                "login"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"admin@stockpile.dev\",\n  \"password\": \"Password123!\"\n}"
+            },
+            "description": "Sets the inv_session cookie. Run this first."
+          }
+        },
+        {
+          "name": "Delete product (admin only)",
+          "request": {
+            "method": "DELETE",
+            "url": {
+              "raw": "{{baseUrl}}/api/products/{{productId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "products",
+                "{{productId}}"
+              ]
+            },
+            "description": "403 when signed in as staff. The product's inventory transactions survive: their product reference becomes null while the snapshotted SKU and name keep the audit trail readable."
+          }
+        },
+        {
+          "name": "Sign out",
+          "request": {
+            "method": "POST",
+            "url": {
+              "raw": "{{baseUrl}}/api/auth/logout",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "auth",
+                "logout"
+              ]
+            }
+          }
+        }
+      ]
+    }
+  ]
+}
