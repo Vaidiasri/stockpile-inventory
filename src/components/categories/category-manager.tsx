@@ -179,7 +179,7 @@ export function CategoryManager({
             </TableHeader>
             <TableBody>
               {categories.map((category) => (
-                <TableRow key={category.id}>
+                <TableRow key={category.id} className="transition-colors hover:bg-accent">
                   <TableCell className="font-medium">{category.name}</TableCell>
                   <TableCell className="hidden max-w-xs truncate text-sm text-muted-foreground sm:table-cell">
                     {category.description ?? "-"}
@@ -204,6 +204,7 @@ export function CategoryManager({
                       <Button
                         variant="ghost"
                         size="icon-sm"
+                        className="touch-target"
                         aria-label={`Edit ${category.name}`}
                         onClick={() => setEditing(category)}
                       >
@@ -213,10 +214,11 @@ export function CategoryManager({
                         <Button
                           variant="ghost"
                           size="icon-sm"
+                          className="touch-target"
                           aria-label={`Delete ${category.name}`}
                           onClick={() => setDeleting(category)}
                         >
-                          <Trash2 className="size-3.5" aria-hidden />
+                          <Trash2 className="size-3.5 text-destructive" aria-hidden />
                         </Button>
                       ) : null}
                     </div>

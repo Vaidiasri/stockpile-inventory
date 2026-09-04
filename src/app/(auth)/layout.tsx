@@ -3,8 +3,11 @@ import Link from "next/link";
 
 export default function AuthLayout({ children }: LayoutProps<"/">) {
   return (
-    <div className="flex min-h-svh flex-col items-center justify-center gap-6 bg-muted/40 p-4 sm:p-6">
-      <Link href="/" className="flex items-center gap-2 text-lg font-semibold">
+    <div className="flex min-h-svh flex-col items-center justify-center gap-6 p-4 sm:p-6">
+      <Link
+        href="/"
+        className="flex items-center gap-2 rounded-md text-lg font-semibold focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none"
+      >
         <Boxes className="size-6 text-primary" aria-hidden />
         Stockpile
       </Link>

@@ -24,21 +24,38 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { formatCurrency, formatDate } from "@/lib/format";
+import { formatCurrency, formatDate, formatDateTime } from "@/lib/format";
 import type { ProductRecord } from "@/lib/services/products";
 import { cn } from "@/lib/utils";
 
 type Category = { id: string; name: string };
 
-const COLUMNS = [
+type Column = {
+  key: string;
+  label: string;
+  sortable: boolean;
+  className?: string;
+  /** Right-aligns the header link too, so it sits over its own numbers. */
+  numeric?: boolean;
+};
+
+// Columns drop by priority as the viewport narrows: the identifier and the
+// two numbers a controller is actually scanning survive longest.
+const COLUMNS: Column[] = [
   { key: "name", label: "Product", sortable: true },
   { key: "sku", label: "SKU", sortable: true, className: "hidden md:table-cell" },
   { key: "category", label: "Category", sortable: false, className: "hidden lg:table-cell" },
-  { key: "quantity", label: "Stock", sortable: true, className: "text-right" },
-  { key: "unitPrice", label: "Unit price", sortable: true, className: "text-right hidden sm:table-cell" },
+  { key: "quantity", label: "Stock", sortable: true, className: "text-right", numeric: true },
+  {
+    key: "unitPrice",
+    label: "Unit price",
+    sortable: true,
+    className: "hidden text-right sm:table-cell",
+    numeric: true,
+  },
   { key: "status", label: "Status", sortable: false },
   { key: "updatedAt", label: "Updated", sortable: false, className: "hidden xl:table-cell" },
-] as const;
+];
 
 /**
  * Sorting is a link, not a click handler: the sort lives in the URL, so it is
@@ -71,13 +88,22 @@ function SortableHeader({
       href={`/products?${next}`}
       scroll={false}
       aria-label={`Sort by ${label}, ${nextOrder}ending`}
+      aria-current={active ? "true" : undefined}
       className={cn(
-        "inline-flex items-center gap-1 rounded-sm hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none",
+        "group/sort -mx-1.5 inline-flex items-center gap-1 rounded-md px-1.5 py-1 transition-colors hover:bg-accent/60 hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none",
         active ? "text-foreground" : "text-muted-foreground",
       )}
     >
       {label}
-      <Icon className="size-3" aria-hidden />
+      <Icon
+        className={cn(
+          "size-3 transition-opacity",
+          // Only the sorted column shows a direction; the rest reveal the
+          // affordance on hover or focus instead of shouting permanently.
+          active ? "opacity-100" : "opacity-0 group-hover/sort:opacity-60 group-focus-visible/sort:opacity-60",
+        )}
+        aria-hidden
+      />
     </Link>
   );
 }
@@ -132,18 +158,20 @@ export function ProductTable({
           <TableHeader>
             <TableRow>
               {COLUMNS.map((column) => (
-                <TableHead key={column.key} className={"className" in column ? column.className : undefined}>
-                  {column.sortable ? (
-                    <SortableHeader
-                      column={column.key}
-                      label={column.label}
-                      currentSort={currentSort}
-                      currentOrder={currentOrder}
-                      params={params}
-                    />
-                  ) : (
-                    column.label
-                  )}
+                <TableHead key={column.key} className={column.className}>
+                  <span className={cn("flex", column.numeric && "justify-end")}>
+                    {column.sortable ? (
+                      <SortableHeader
+                        column={column.key}
+                        label={column.label}
+                        currentSort={currentSort}
+                        currentOrder={currentOrder}
+                        params={params}
+                      />
+                    ) : (
+                      column.label
+                    )}
+                  </span>
                 </TableHead>
               ))}
               <TableHead className="w-10">
@@ -153,7 +181,7 @@ export function ProductTable({
           </TableHeader>
           <TableBody>
             {products.map((product) => (
-              <TableRow key={product.id}>
+              <TableRow key={product.id} className="transition-colors hover:bg-accent">
                 <TableCell className="font-medium">
                   <Link
                     href={`/products/${product.id}`}
@@ -173,7 +201,9 @@ export function ProductTable({
                     <span className="text-muted-foreground">Uncategorised</span>
                   )}
                 </TableCell>
-                <TableCell className="text-right tabular-nums">{product.quantity}</TableCell>
+                <TableCell className="text-right font-medium tabular-nums">
+                  {product.quantity}
+                </TableCell>
                 <TableCell className="hidden text-right tabular-nums sm:table-cell">
                   {formatCurrency(product.unitPrice)}
                 </TableCell>
@@ -181,7 +211,12 @@ export function ProductTable({
                   <StatusBadge status={product.status} />
                 </TableCell>
                 <TableCell className="hidden text-xs text-muted-foreground xl:table-cell">
-                  {formatDate(product.updatedAt)}
+                  <time
+                    dateTime={new Date(product.updatedAt).toISOString()}
+                    title={formatDateTime(product.updatedAt)}
+                  >
+                    {formatDate(product.updatedAt)}
+                  </time>
                 </TableCell>
                 <TableCell>
                   <DropdownMenu>
@@ -190,6 +225,7 @@ export function ProductTable({
                         <Button
                           variant="ghost"
                           size="icon-sm"
+                          className="touch-target"
                           aria-label={`Actions for ${product.name}`}
                         >
                           <MoreHorizontal className="size-4" aria-hidden />

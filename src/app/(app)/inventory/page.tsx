@@ -3,6 +3,9 @@ import type { Metadata } from "next";
 import Link from "next/link";
 
 import { Pagination } from "@/components/pagination";
+import { Button } from "@/components/ui/button";
+import { Label } from "@/components/ui/label";
+import { StockDelta } from "@/components/stock-delta";
 import { NativeSelect } from "@/components/ui/native-select";
 import {
   Table,
@@ -40,9 +43,7 @@ export default async function InventoryPage({ searchParams }: PageProps<"/invent
         {/* A plain GET form: filtering needs no client JavaScript. */}
         <form className="flex items-end gap-2">
           <div className="grid gap-1.5">
-            <label htmlFor="type" className="text-sm font-medium">
-              Movement type
-            </label>
+            <Label htmlFor="type">Movement type</Label>
             <NativeSelect id="type" name="type" defaultValue={params.type ?? ""}>
               <option value="">All movements</option>
               <option value="in">Stock in</option>
@@ -50,12 +51,9 @@ export default async function InventoryPage({ searchParams }: PageProps<"/invent
               <option value="adjust">Corrections</option>
             </NativeSelect>
           </div>
-          <button
-            type="submit"
-            className="h-8 rounded-lg border border-input px-3 text-sm font-medium hover:bg-muted"
-          >
+          <Button type="submit" variant="outline">
             Apply
-          </button>
+          </Button>
         </form>
       </div>
 
@@ -85,7 +83,7 @@ export default async function InventoryPage({ searchParams }: PageProps<"/invent
             </TableHeader>
             <TableBody>
               {movements.map((movement) => (
-                <TableRow key={movement.id}>
+                <TableRow key={movement.id} className="transition-colors hover:bg-accent">
                   <TableCell className="text-xs text-muted-foreground">
                     {/* TableCell is nowrap, so the full timestamp would push
                         Change and Balance off a phone screen. */}
@@ -112,17 +110,10 @@ export default async function InventoryPage({ searchParams }: PageProps<"/invent
                     </span>
                   </TableCell>
                   <TableCell className="hidden md:table-cell">{LABELS[movement.type]}</TableCell>
-                  <TableCell
-                    className={`text-right tabular-nums ${
-                      movement.quantityDelta > 0
-                        ? "text-emerald-600 dark:text-emerald-400"
-                        : "text-red-600 dark:text-red-400"
-                    }`}
-                  >
-                    {movement.quantityDelta > 0 ? "+" : ""}
-                    {movement.quantityDelta}
+                  <TableCell className="text-right">
+                    <StockDelta value={movement.quantityDelta} />
                   </TableCell>
-                  <TableCell className="text-right tabular-nums">
+                  <TableCell className="text-right font-medium tabular-nums">
                     {movement.quantityAfter}
                   </TableCell>
                   <TableCell className="hidden text-sm text-muted-foreground lg:table-cell">

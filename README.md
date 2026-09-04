@@ -11,6 +11,7 @@ Built with **Next.js 16** (App Router) and **Neon Postgres**.
 | Live API reference | `/api-docs` (rendered from [`public/openapi.json`](public/openapi.json)) |
 | Postman collection | [`docs/Stockpile.postman_collection.json`](docs/Stockpile.postman_collection.json) - 27 requests, 23 assertions |
 | Demo accounts | `admin@stockpile.dev` / `staff@stockpile.dev`, password `Password123!` |
+| Design system | [DESIGN.md](DESIGN.md) (tokens, type, motion) and [PRODUCT.md](PRODUCT.md) (users, principles) |
 
 ## Screenshots
 
@@ -34,6 +35,11 @@ Built with **Next.js 16** (App Router) and **Neon Postgres**.
 | --- | --- |
 | ![Mobile](docs/screenshots/mobile.png) | ![API reference](docs/screenshots/api-docs.png) |
 
+Dark mode is a maintained theme, not an inverted afterthought — every token pair
+is contrast-checked in both:
+
+![Dashboard in dark mode](docs/screenshots/dashboard-dark.png)
+
 ## Stack
 
 | Layer | Choice | Why not the alternative |
@@ -45,6 +51,7 @@ Built with **Next.js 16** (App Router) and **Neon Postgres**.
 | Validation | Zod, one schema per request, shared by the API and the forms | Separate client and server rules drift apart |
 | List state | URL search params | Redux/Zustand for state the URL already holds, losing shareable links and the back button |
 | UI | Tailwind CSS v4, shadcn/ui, `sonner` toasts, `next-themes` dark mode | A component library that cannot be edited in place |
+| Colour | OKLCH tokens, one brand hue plus three reserved semantic hues | Hard-coded Tailwind palette classes, which break one theme or the other |
 | Tests | Vitest, split into offline unit and real-database integration suites | - |
 
 ## Architecture
@@ -335,6 +342,28 @@ The API is additionally covered end to end by the Postman collection:
 npx newman run docs/Stockpile.postman_collection.json
 # 27 requests, 23 assertions, 0 failures
 ```
+
+## Design
+
+The visual system is documented in [DESIGN.md](DESIGN.md); the audience and
+principles behind it in [PRODUCT.md](PRODUCT.md). Three decisions worth calling
+out:
+
+- **Stock state owns three hues, so the brand cannot.** In stock, low stock and
+  out of stock are green, amber and red. The brand colour is patina teal at hue
+  190 — 38 degrees from the nearest of them — and it is never used as a pill, so
+  a brand element cannot be mistaken for a stock state. There is deliberately
+  no second accent hue: a fourth colour in a UI where three already carry
+  mandatory meaning subtracts clarity rather than adding identity.
+- **Every contrast pair is measured, not eyeballed.** All 32 token pairs clear
+  WCAG 2.2 AA in both themes (body ≥ 4.5:1, UI ≥ 3:1), verified with an
+  OKLCH-to-sRGB contrast script. This caught a real failure in the starting
+  palette: the stock shadcn `muted-foreground` measured 4.34:1 on a `muted`
+  surface, which is the exact pairing used by the sidebar and several table
+  cells.
+- **Colour is never the only signal.** Stock badges always carry their words,
+  and signed stock movements carry an explicit `+` or `-`, so both survive
+  greyscale, a colour vision deficiency, and a screen reader.
 
 ## Assumptions and trade-offs
 
